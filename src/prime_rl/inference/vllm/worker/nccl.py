@@ -1,3 +1,4 @@
+import os
 import pickle
 from typing import TYPE_CHECKING, Callable, Generator, cast
 
@@ -113,10 +114,13 @@ class NCCLWeightUpdateWorker(Worker):
         tp_size = get_tp_group().world_size
         tp_rank = get_tp_group().rank_in_group
         dp_rank = get_dp_group().rank_in_group
-        # Use modulo to get the local DP rank within this server (needed when
-        # the DP group spans multiple nodes in distributed EP mode).
-        local_dp_rank = dp_rank % (gpus_per_server // tp_size)
-        local_rank = local_dp_rank * tp_size + tp_rank
+
+        # vLLM launches local DP shards as independent engine cores, so the DP
+        # group inside each worker can still report rank 0 even when multiple
+        # local shards exist. Use the worker's local GPU rank to derive the
+        # per-server NCCL rank instead of the DP group rank.
+        local_rank = int(os.environ.get("LOCAL_RANK", self.device.index))
+        local_dp_rank = local_rank // tp_size
         global_rank_inference = rank_offset + local_rank
 
         logger.info(
