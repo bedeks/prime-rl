@@ -1,3 +1,4 @@
+import os
 import pickle
 from typing import TYPE_CHECKING, Callable, Generator, cast
 
@@ -24,6 +25,26 @@ else:
     Worker = object
 
 logger = init_logger("vllm.inference.vllm.worker_nccl")
+
+
+def resolve_nccl_worker_ranks(
+    tp_size: int,
+    rank_offset: int,
+    device_index: int,
+    local_rank_env: str | None = None,
+) -> tuple[int, int, int]:
+    """Resolve per-worker NCCL ranks for single-server inference shards.
+
+    vLLM launches local DP shards as separate worker processes. In that layout,
+    the DP process group inside each worker can still report rank 0 even when
+    multiple local shards exist. Derive shard identity from the worker's local
+    GPU rank instead.
+    """
+    local_rank_value = local_rank_env if local_rank_env is not None else os.environ.get("LOCAL_RANK")
+    local_rank = int(local_rank_value) if local_rank_value is not None else device_index
+    local_dp_rank = local_rank // tp_size
+    global_rank_inference = rank_offset + local_rank
+    return local_rank, local_dp_rank, global_rank_inference
 
 
 def receive_integer(communicator: PyNcclCommunicator) -> int:
@@ -113,11 +134,12 @@ class NCCLWeightUpdateWorker(Worker):
         tp_size = get_tp_group().world_size
         tp_rank = get_tp_group().rank_in_group
         dp_rank = get_dp_group().rank_in_group
-        # Use modulo to get the local DP rank within this server (needed when
-        # the DP group spans multiple nodes in distributed EP mode).
-        local_dp_rank = dp_rank % (gpus_per_server // tp_size)
-        local_rank = local_dp_rank * tp_size + tp_rank
-        global_rank_inference = rank_offset + local_rank
+
+        local_rank, local_dp_rank, global_rank_inference = resolve_nccl_worker_ranks(
+            tp_size=tp_size,
+            rank_offset=rank_offset,
+            device_index=self.device.index,
+        )
 
         logger.info(
             f"Worker [tp={tp_rank} dp={dp_rank} local_dp={local_dp_rank} rank_offset={rank_offset}] "
