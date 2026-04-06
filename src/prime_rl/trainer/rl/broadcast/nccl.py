@@ -17,11 +17,10 @@ from prime_rl.trainer.runs import get_multi_run_manager
 from prime_rl.trainer.utils import get_world
 from prime_rl.trainer.weights import get_max_layer_num
 from prime_rl.utils.logger import get_logger
+from prime_rl.utils.nccl import get_nccl_ready_path
 from prime_rl.utils.pathing import sync_wait_for_path
 from prime_rl.utils.utils import get_broadcast_dir, get_step_path
 from prime_rl.utils.vlm import get_layer_prefix
-
-NCCL_READY_MARKER = "NCCL_READY"
 
 
 def broadcast_integer(integer: int, communicator: PyNcclCommunicator) -> None:
@@ -180,6 +179,7 @@ class NCCLWeightBroadcast(WeightBroadcast):
         self.logger = get_logger()
         self.world = get_world()
         self.multi_run_manager = get_multi_run_manager()
+        self.inference_world_size = config.inference_world_size
         self.nccl_broadcast_sender = NCCLWeightBroadcastSender(
             config.host,
             config.port,
@@ -237,7 +237,8 @@ class NCCLWeightBroadcast(WeightBroadcast):
     def _wait_for_nccl_ready(self, notified_runs: list[tuple[int, Path]]):
         """Wait for inference workers to signal they are ready to receive NCCL broadcast."""
         for idx, save_dir in notified_runs:
-            nccl_ready_file = save_dir / NCCL_READY_MARKER
-            self.logger.debug(f"Waiting for NCCL_READY marker at {nccl_ready_file}")
-            sync_wait_for_path(nccl_ready_file, interval=0.1, log_interval=10)
-            self.logger.debug(f"Inference workers ready for NCCL broadcast (run {idx})")
+            for rank in range(1, self.inference_world_size + 1):
+                nccl_ready_file = get_nccl_ready_path(save_dir, rank)
+                self.logger.debug(f"Waiting for NCCL_READY marker from inference rank {rank} at {nccl_ready_file}")
+                sync_wait_for_path(nccl_ready_file, interval=0.1, log_interval=10)
+            self.logger.debug(f"All inference workers ready for NCCL broadcast (run {idx})")

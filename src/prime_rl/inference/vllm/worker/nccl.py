@@ -1,5 +1,6 @@
 import os
 import pickle
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Generator, cast
 
 import torch
@@ -15,6 +16,7 @@ from prime_rl.inference.vllm.worker.weight_transfer import (
     postprocess_weights_checkpoint,
     postprocess_weights_kernel,
 )
+from prime_rl.utils.nccl import get_nccl_ready_path
 
 # This is to get type hints for the Worker class but not actually extend it at runtime as this is required by vLLM worker extension
 if TYPE_CHECKING:
@@ -185,6 +187,7 @@ class NCCLWeightUpdateWorker(Worker):
             device=self.device,
             timeout=timeout,
         )
+        self.nccl_broadcast_rank = global_rank_inference + 1
 
     def update_weights_from_path(self, weight_dir: str) -> None:
         """Update weights with the nccl communicator."""
@@ -206,5 +209,9 @@ class NCCLWeightUpdateWorker(Worker):
             loader_fn = load_weights_checkpoint
             postprocess_fn = postprocess_weights_checkpoint
 
+        ready_path = get_nccl_ready_path(Path(weight_dir), self.nccl_broadcast_rank)
+        ready_path.parent.mkdir(parents=True, exist_ok=True)
+        ready_path.touch()
+        logger.info(f"Signaled NCCL readiness at {ready_path}")
         loader_fn(model, state_iter)
         postprocess_fn(model, self.model_runner.model_config, device)
