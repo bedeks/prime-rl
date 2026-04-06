@@ -85,7 +85,8 @@ def train(config: SFTConfig):
     torch.set_float32_matmul_precision("high")
 
     if config.model.lora is not None:
-        setup_multi_run_manager(config.output_dir, 1, torch.device("cuda", world.local_rank), config.model.lora)
+        trainer_device = torch.device("cuda", torch.cuda.current_device())
+        setup_multi_run_manager(config.output_dir, 1, trainer_device, config.model.lora)
 
     # Initialize parallel dimensions
     parallel_dims = get_parallel_dims(config.model, config.data.seq_len)

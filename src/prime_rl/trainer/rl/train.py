@@ -110,8 +110,9 @@ def train(config: TrainerConfig):
     torch.set_float32_matmul_precision("high")
 
     # Setup multi run manager and offsets (including LoRA validation/scaling hooks if applicable)
+    trainer_device = torch.device("cuda", torch.cuda.current_device())
     multi_run_manager = setup_multi_run_manager(
-        config.output_dir, config.max_concurrent_runs, torch.device("cuda", world.local_rank), config.model.lora
+        config.output_dir, config.max_concurrent_runs, trainer_device, config.model.lora
     )
 
     # Initialize parallel dimensions

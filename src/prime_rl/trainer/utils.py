@@ -1,5 +1,6 @@
 import gc
 import json
+import os
 import pickle
 import shutil
 import time
@@ -130,8 +131,13 @@ def get_ckpt_disk_metrics(output_dir: Path) -> dict[str, float]:
     }
 
 
+def get_local_cuda_device_id() -> int:
+    """Resolve the CUDA device ordinal for the current trainer rank."""
+    return int(os.environ.get("PRIME_TRAINER_CUDA_BASE", "0")) + get_world().local_rank
+
+
 def setup_torch_distributed(timeout: timedelta = DEFAULT_TIMEOUT, enable_gloo: bool = False):
-    device_id = get_world().local_rank
+    device_id = get_local_cuda_device_id()
     torch.cuda.set_device(device_id)
     # Use Gloo backend for CPU and NCCL for GPU when CPU offloading is enabled
     # Otherwise use NCCL for better GPU performance

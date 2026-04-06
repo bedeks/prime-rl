@@ -40,6 +40,26 @@ def get_physical_gpu_ids() -> list[int]:
     return [int(token.strip()) for token in raw_visible.split(",") if token.strip()]
 
 
+def resolve_local_cuda_visibility(
+    infer_gpu_ids: list[int],
+    trainer_gpu_ids: list[int],
+    use_shared_nccl_namespace: bool,
+) -> tuple[str, str, int | None]:
+    """Resolve subprocess CUDA visibility for local RL runs.
+
+    When trainer and inference join the same local NCCL communicator, they must
+    share a consistent CUDA ordinal namespace for NCCL P2P/CUMEM transport to
+    work. In that case, expose the union of trainer and inference GPUs to both
+    processes and pin trainer ranks via an explicit base offset.
+    """
+    if use_shared_nccl_namespace:
+        shared_gpu_ids = infer_gpu_ids + trainer_gpu_ids
+        shared_visible = ",".join(map(str, shared_gpu_ids))
+        return shared_visible, shared_visible, len(infer_gpu_ids)
+
+    return ",".join(map(str, infer_gpu_ids)), ",".join(map(str, trainer_gpu_ids)), None
+
+
 def write_config(config: RLConfig, output_dir: Path, exclude: set[str] | None = None) -> None:
     """Write resolved config to disk, excluding launcher-only fields."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -129,6 +149,17 @@ def rl_local(config: RLConfig):
     infer_gpu_ids = [physical_gpu_mapping[local_gpu_id] for local_gpu_id in infer_local_gpu_ids]
     trainer_gpu_ids = [physical_gpu_mapping[local_gpu_id] for local_gpu_id in trainer_local_gpu_ids]
     teacher_gpu_ids = [physical_gpu_mapping[local_gpu_id] for local_gpu_id in teacher_local_gpu_ids]
+    use_shared_nccl_namespace = config.inference is not None and config.trainer.weight_broadcast.type == "nccl"
+    inference_visible_devices, trainer_visible_devices, trainer_cuda_base = resolve_local_cuda_visibility(
+        infer_gpu_ids,
+        trainer_gpu_ids,
+        use_shared_nccl_namespace=use_shared_nccl_namespace,
+    )
+    if use_shared_nccl_namespace:
+        logger.info(
+            "Using shared CUDA_VISIBLE_DEVICES for local NCCL broadcast "
+            f"(visible={inference_visible_devices}, trainer_cuda_base={trainer_cuda_base})"
+        )
 
     start_command = sys.argv
     logger.info("Starting RL run")
@@ -185,12 +216,14 @@ def rl_local(config: RLConfig):
             logger.debug(f"Inference start command: {' '.join(inference_cmd)}")
             # If we don't log stdout, the server hangs
             with open(log_dir / "inference.log", "w") as log_file:
+                inference_env = {
+                    **os.environ,
+                    "CUDA_VISIBLE_DEVICES": inference_visible_devices,
+                }
+                inference_env.pop("PRIME_TRAINER_CUDA_BASE", None)
                 inference_process = Popen(
                     inference_cmd,
-                    env={
-                        **os.environ,
-                        "CUDA_VISIBLE_DEVICES": ",".join(map(str, infer_gpu_ids)),
-                    },
+                    env=inference_env,
                     stdout=log_file,
                     stderr=log_file,
                 )
@@ -229,12 +262,14 @@ def rl_local(config: RLConfig):
             logger.info(f"Starting teacher inference process on GPU(s) {' '.join(map(str, teacher_gpu_ids))}")
             logger.debug(f"Teacher inference start command: {' '.join(teacher_inference_cmd)}")
             with open(log_dir / "teacher_inference.log", "w") as log_file:
+                teacher_inference_env = {
+                    **os.environ,
+                    "CUDA_VISIBLE_DEVICES": ",".join(map(str, teacher_gpu_ids)),
+                }
+                teacher_inference_env.pop("PRIME_TRAINER_CUDA_BASE", None)
                 teacher_inference_process = Popen(
                     teacher_inference_cmd,
-                    env={
-                        **os.environ,
-                        "CUDA_VISIBLE_DEVICES": ",".join(map(str, teacher_gpu_ids)),
-                    },
+                    env=teacher_inference_env,
                     stdout=log_file,
                     stderr=log_file,
                 )
@@ -312,19 +347,24 @@ def rl_local(config: RLConfig):
         logger.info(f"Starting trainer on GPU(s) {' '.join(map(str, trainer_gpu_ids))}")
         logger.debug(f"Training start command: {' '.join(trainer_cmd)}")
         with open(log_dir / "trainer.log", "w") as log_file:
+            trainer_env = {
+                **os.environ,
+                **wandb_shared_env,
+                "WANDB_SHARED_LABEL": "trainer",
+                "CUDA_VISIBLE_DEVICES": trainer_visible_devices,
+                "PYTHONUNBUFFERED": "1",
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                "LOGURU_FORCE_COLORS": "1",
+                "WANDB_PROGRAM": "uv run rl",
+                "WANDB_ARGS": json.dumps(start_command),
+            }
+            if trainer_cuda_base is None:
+                trainer_env.pop("PRIME_TRAINER_CUDA_BASE", None)
+            else:
+                trainer_env["PRIME_TRAINER_CUDA_BASE"] = str(trainer_cuda_base)
             trainer_process = Popen(
                 trainer_cmd,
-                env={
-                    **os.environ,
-                    **wandb_shared_env,
-                    "WANDB_SHARED_LABEL": "trainer",
-                    "CUDA_VISIBLE_DEVICES": ",".join(map(str, trainer_gpu_ids)),
-                    "PYTHONUNBUFFERED": "1",
-                    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-                    "LOGURU_FORCE_COLORS": "1",
-                    "WANDB_PROGRAM": "uv run rl",
-                    "WANDB_ARGS": json.dumps(start_command),
-                },
+                env=trainer_env,
                 stdout=log_file,
                 stderr=log_file,
             )
