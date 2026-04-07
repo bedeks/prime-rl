@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import State
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.chat_utils import load_chat_template
-from vllm.entrypoints.cli.serve import run_api_server_worker_proc
+from vllm.entrypoints.cli.serve import run_api_server_worker_proc as _original_cli_run_api_server_worker_proc
 from vllm.entrypoints.logger import RequestLogger
 from vllm.entrypoints.openai.api_server import init_app_state
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionResponse
@@ -332,12 +332,33 @@ def custom_run_api_server_worker_proc(listen_address, sock, args, client_config=
     # to make our custom routes work in multi-API-server settings.
     import prime_rl.inference.vllm.server  # noqa: F401
 
-    run_api_server_worker_proc(listen_address, sock, args, client_config, **uvicorn_kwargs)
+    _original_cli_run_api_server_worker_proc(listen_address, sock, args, client_config, **uvicorn_kwargs)
+
+
+def custom_v1_run_api_server_worker_proc(listen_address, sock, args, client_config=None, **uvicorn_kwargs) -> None:
+    """
+    Modifies vllm.v1.utils.run_api_server_worker_proc:
+    1. Re-import our module to ensure monkey patches are applied in child processes
+    """
+    # NOTE: vLLM >= 0.19 starts multi-API workers through vllm.v1.utils,
+    # bypassing the legacy cli.serve hook.
+    import prime_rl.inference.vllm.server  # noqa: F401
+
+    if _original_v1_run_api_server_worker_proc is None:
+        raise RuntimeError("vllm.v1.utils.run_api_server_worker_proc is unavailable in this vLLM version")
+
+    _original_v1_run_api_server_worker_proc(listen_address, sock, args, client_config, **uvicorn_kwargs)
 
 
 import vllm.entrypoints.cli.serve
 import vllm.entrypoints.openai.api_server
 from vllm.entrypoints.openai.api_server import build_app as _original_build_app
+
+try:
+    import vllm.v1.utils
+    from vllm.v1.utils import run_api_server_worker_proc as _original_v1_run_api_server_worker_proc
+except ImportError:
+    _original_v1_run_api_server_worker_proc = None
 
 
 def custom_build_app(args: Namespace, supported_tasks: tuple):
@@ -355,6 +376,8 @@ def custom_build_app(args: Namespace, supported_tasks: tuple):
 vllm.entrypoints.openai.api_server.init_app_state = custom_init_app_state
 vllm.entrypoints.openai.api_server.build_app = custom_build_app
 vllm.entrypoints.cli.serve.run_api_server_worker_proc = custom_run_api_server_worker_proc
+if _original_v1_run_api_server_worker_proc is not None:
+    vllm.v1.utils.run_api_server_worker_proc = custom_v1_run_api_server_worker_proc
 
 
 # Adapted from vllm/entrypoints/cli/serve.py
