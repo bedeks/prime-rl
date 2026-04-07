@@ -138,7 +138,7 @@ def rl_local(config: RLConfig):
     wandb_shared_env: dict[str, str] = {}
     if config.wandb and config.wandb.shared:
         wandb_shared_env["WANDB_SHARED_MODE"] = "1"
-        wandb_shared_env["WANDB_SHARED_RUN_ID"] = uuid.uuid4().hex
+        wandb_shared_env["WANDB_SHARED_RUN_ID"] = os.environ.get("WANDB_SHARED_RUN_ID", uuid.uuid4().hex)
 
     # Check for existing processes on GPUs
     all_gpu_ids = list(set(infer_gpu_ids + trainer_gpu_ids + teacher_gpu_ids))
@@ -296,6 +296,7 @@ def rl_local(config: RLConfig):
         # Start training process
         trainer_cmd = [
             "torchrun",
+            "--role=trainer",
             f"--rdzv-endpoint=localhost:{get_free_port()}",
             f"--rdzv-id={uuid.uuid4().hex}",
             # Pipe all logs to file, and only master rank logs to stdout
@@ -342,7 +343,10 @@ def rl_local(config: RLConfig):
         # Monitor all processes for failures
         logger.success("Startup complete. Showing trainer logs...")
 
-        tail_process = Popen(["tail", "-F", log_dir / "trainer.log"])
+        tail_process = Popen(
+            f"tail -F '{log_dir / 'trainer.log'}' | sed -u 's/^\\[[a-zA-Z]*[0-9]*\\]://'",
+            shell=True,
+        )
         processes.append(tail_process)
 
         # Check for errors from monitor threads

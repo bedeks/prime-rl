@@ -2,10 +2,16 @@
 
 ## Changelog Enforcement
 
-Any PR that modifies configuration structures or usage patterns must update `CHANGELOG.md`. This includes changes to config fields (added, removed, renamed, moved, or default value changes) in:
+Any PR that introduces **breaking** configuration changes must update `CHANGELOG.md`. Breaking changes are those that require users to update existing configs:
 
-- `src/prime_rl/*/config.py`
-- `src/prime_rl/rl.py`
-- `src/prime_rl/utils/config.py`
+- **Renamed** config fields (old name no longer accepted)
+- **Removed** config fields (field deleted or moved to a different path)
+- **Moved** config fields (field relocated in the config hierarchy)
 
-If such changes are detected without a corresponding `CHANGELOG.md` update, request that the author add an entry.
+Additive changes (new fields with defaults, new optional features) and default value changes do **not** require a changelog entry.
+
+Config files live in:
+
+- `src/prime_rl/configs/`
+
+If breaking changes are detected without a corresponding `CHANGELOG.md` update, request that the author add an entry.

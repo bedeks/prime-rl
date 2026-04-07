@@ -342,6 +342,7 @@ else
     echo $HOSTNAMES_STR | tee $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log
 
     {% if wandb_shared %}WANDB_SHARED_LABEL=trainer {% endif %}uv run torchrun \
+        --role=trainer \
         --nnodes=$NUM_TRAIN_NODES \
         --nproc-per-node=$GPUS_PER_NODE \
         --node-rank=$TRAIN_NODE_RANK \
@@ -353,6 +354,6 @@ else
         --local-ranks-filter={{ ranks_filter }} \
         -m prime_rl.trainer.rl.train \
         @ $CONFIG_DIR/trainer.toml \
-        2>&1 | tee -a $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log
+        2>&1 | sed -u 's/^\[[a-zA-Z]*[0-9]*\]://' | tee -a $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log
 {% if num_infer_nodes > 0 %}    fi{% endif %}
 '

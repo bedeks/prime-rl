@@ -82,6 +82,7 @@ srun bash -c '
 
     echo $HOSTNAMES | tee $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log
     uv run torchrun \
+        --role=trainer \
         --nnodes=$NUM_NODES \
         --nproc-per-node=$GPUS_PER_NODE \
         --node-rank=$TRAIN_NODE_RANK \
@@ -93,5 +94,5 @@ srun bash -c '
         --local-ranks-filter={{ ranks_filter }} \
         -m prime_rl.trainer.sft.train \
         @ $CONFIG_PATH \
-        2>&1 | tee -a $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log
+        2>&1 | sed -u 's/^\[[a-zA-Z]*[0-9]*\]://' | tee -a $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log
 '

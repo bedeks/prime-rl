@@ -1,7 +1,9 @@
 # Changelog
 
-Documenting changes which affect configuration usage patterns (added/moved/removed/renamed fields, notable logic changes).
+Documenting **breaking** configuration changes — renamed, removed, or moved fields that require users to update existing configs.
 
+- **`orchestrator.env[].max_total_completion_tokens` (NEW)**: Added `max_total_completion_tokens: int` to `EnvConfig` (default: `-1`, disabled). Limits the total completion tokens across all turns in a multi-turn rollout. Auto-populated into `extra_env_kwargs` and applied via the verifiers `set_max_total_completion_tokens()` setter. Works for both training and eval environments. (2026-04-06)
+- **`sampling.max_tokens` → `sampling.max_completion_tokens`**: Renamed `max_tokens` to `max_completion_tokens` in both `SamplingConfig` and `EvalSamplingConfig` for consistency with OpenAI API naming. The old name is accepted with a deprecation warning. (2026-04-06)
 - **`log.file` and `log.env_worker_logs` removed**: Removed `log.file` (from `LogConfig` and `SharedLogConfig`) and `log.env_worker_logs` (from `LogConfig`). Python file logging is replaced by deployment-level capture. Existing configs using these fields must delete them. Log paths unified: `.stdout` files renamed to `.log`, SLURM logs moved from `slurm/` to `logs/`. (2026-03-31)
 - **`trainer.log.ranks_filter` (NEW)**: Added `ranks_filter: list[int]` to `TrainerLogConfig` (default: `[0]`). Controls which ranks appear in trainer console output via torchrun's `--local-ranks-filter`. (2026-03-31)
 - **`wandb.log_extras.sample_ratio` / monitor sample logging defaults**: `wandb.log_extras.sample_ratio` is now actually applied to W&B sample-table logging via the shared monitor sampler (it was previously a no-op for WandB). Separately, the orchestrator no longer hard-caps sample logging to 8 rollouts before monitor-level sampling runs, so when monitor `sample_ratio` is `None`, monitors now receive and may log the full rollout batch for a step instead of at most 8 rollouts. This affects both W&B and Prime monitor sample logging behavior. (2026-03-27)

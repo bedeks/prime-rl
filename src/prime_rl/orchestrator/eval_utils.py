@@ -47,8 +47,8 @@ def get_eval_sampling_args(sampling_config: EvalSamplingConfig) -> dict[str, Any
     # Apply sampling arguments, if specified
     if sampling_config.temperature is not None:
         sampling_args["temperature"] = sampling_config.temperature
-    if sampling_config.max_tokens is not None:
-        sampling_args["max_tokens"] = sampling_config.max_tokens
+    if sampling_config.max_completion_tokens is not None:
+        sampling_args["max_completion_tokens"] = sampling_config.max_completion_tokens
     if sampling_config.top_p is not None:
         sampling_args["top_p"] = sampling_config.top_p
     if sampling_config.reasoning_effort is not None:
