@@ -54,20 +54,17 @@ def test_resolve_nccl_worker_ranks(
 
 def test_resolve_nccl_worker_ranks_falls_back_to_device_index(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("LOCAL_RANK", raising=False)
-    assert (
-        resolve_nccl_worker_ranks(
-            tp_size=2,
-            tp_rank=1,
-            dp_rank=0,
-            dp_world_size=1,
-            dp_rank_local=None,
-            rank_offset=4,
-            gpus_per_server=4,
-            device_index=3,
-            local_rank_env=None,
-        )
-        == (3, 1, 7, "device_index")
-    )
+    assert resolve_nccl_worker_ranks(
+        tp_size=2,
+        tp_rank=1,
+        dp_rank=0,
+        dp_world_size=1,
+        dp_rank_local=None,
+        rank_offset=4,
+        gpus_per_server=4,
+        device_index=3,
+        local_rank_env=None,
+    ) == (3, 1, 7, "device_index")
 
 
 def test_init_broadcaster_preserves_dp_group_path(monkeypatch: pytest.MonkeyPatch):
