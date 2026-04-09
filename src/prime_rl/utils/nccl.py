@@ -33,6 +33,9 @@ def disable_nccl_p2p_if_unavailable() -> None:
         # No NVLink found between any GPUs — disable P2P/SHM
         os.environ.setdefault("NCCL_P2P_DISABLE", "1")
         os.environ.setdefault("NCCL_SHM_DISABLE", "1")
-        get_logger().info("No NVLink detected, disabling NCCL P2P and SHM transports")
+        get_logger().warning(
+            "No NVLink detected, disabling NCCL P2P and SHM transports. "
+            "Override by setting NCCL_P2P_DISABLE=0 and NCCL_SHM_DISABLE=0 explicitly."
+        )
     finally:
         pynvml.nvmlShutdown()
