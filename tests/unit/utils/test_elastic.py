@@ -5,15 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from prime_rl.utils.elastic import (
+from prime_rl.utils.client import (
     AdapterState,
-    ElasticInferencePool,
+    InferencePool,
     check_server_model,
     discover_ready_servers,
     discover_server_ips,
 )
-
-# discover_server_ips tests
 
 
 def test_discover_server_ips_returns_sorted_ips():
@@ -35,9 +33,6 @@ def test_discover_server_ips_returns_single_ip():
         mock_dns.return_value = ("hostname", [], ["10.0.0.1"])
         result = discover_server_ips("single.hostname")
         assert result == ["10.0.0.1"]
-
-
-# check_server_model tests
 
 
 def test_check_server_model_returns_true_when_model_found():
@@ -102,23 +97,17 @@ def test_check_server_model_returns_false_on_http_error():
         assert is_healthy is False
 
 
-# discover_ready_servers tests
-
-
 def test_discover_ready_servers_returns_servers_with_model_when_any_have_it():
     with (
-        patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover,
-        patch("prime_rl.utils.elastic.check_server_model") as mock_check,
+        patch("prime_rl.utils.client.discover_server_ips") as mock_discover,
+        patch("prime_rl.utils.client.check_server_model") as mock_check,
     ):
         mock_discover.return_value = ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
 
         async def mock_check_impl(url, model_name):
             if "10.0.0.1" in url:
-                return True, True  # has model, healthy
-            elif "10.0.0.2" in url:
-                return False, True  # no model, healthy
-            else:
-                return False, True  # no model, healthy
+                return True, True
+            return False, True
 
         mock_check.side_effect = mock_check_impl
 
@@ -129,19 +118,19 @@ def test_discover_ready_servers_returns_servers_with_model_when_any_have_it():
 
 def test_discover_ready_servers_returns_empty_when_none_have_model():
     with (
-        patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover,
-        patch("prime_rl.utils.elastic.check_server_model") as mock_check,
+        patch("prime_rl.utils.client.discover_server_ips") as mock_discover,
+        patch("prime_rl.utils.client.check_server_model") as mock_check,
     ):
         mock_discover.return_value = ["10.0.0.1", "10.0.0.2"]
-        mock_check.return_value = (False, True)  # no model, but healthy
+        mock_check.return_value = (False, True)
 
         result = asyncio.run(discover_ready_servers("test.hostname", 8000, "my-lora"))
 
-        assert result == []  # No servers have the model, so return empty
+        assert result == []
 
 
 def test_discover_ready_servers_returns_empty_when_no_dns_records():
-    with patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover:
+    with patch("prime_rl.utils.client.discover_server_ips") as mock_discover:
         mock_discover.return_value = []
 
         result = asyncio.run(discover_ready_servers("test.hostname", 8000, "my-lora"))
@@ -151,26 +140,21 @@ def test_discover_ready_servers_returns_empty_when_no_dns_records():
 
 def test_discover_ready_servers_only_returns_servers_with_model():
     with (
-        patch("prime_rl.utils.elastic.discover_server_ips") as mock_discover,
-        patch("prime_rl.utils.elastic.check_server_model") as mock_check,
+        patch("prime_rl.utils.client.discover_server_ips") as mock_discover,
+        patch("prime_rl.utils.client.check_server_model") as mock_check,
     ):
         mock_discover.return_value = ["10.0.0.1", "10.0.0.2"]
 
         async def mock_check_impl(url, model_name):
             if "10.0.0.1" in url:
-                return True, True  # has model, healthy
-            else:
-                return False, True  # no model, healthy
+                return True, True
+            return False, True
 
         mock_check.side_effect = mock_check_impl
 
         result = asyncio.run(discover_ready_servers("test.hostname", 8000, "my-lora"))
 
-        # Only returns servers that have the model
         assert result == ["http://10.0.0.1:8000/v1"]
-
-
-# AdapterState tests
 
 
 def test_adapter_state_creation():
@@ -180,123 +164,115 @@ def test_adapter_state_creation():
     assert adapter.step == 100
 
 
-# ElasticInferencePool adapter matching tests
-
-
 def test_adapter_matches_when_no_adapter_desired():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
-        # No adapter desired (base model inference)
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
+
         assert pool._adapter_matches_desired(None) is True
         assert pool._adapter_matches_desired(AdapterState("x", Path("/x"), 0)) is True
 
 
 def test_adapter_matches_by_path():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
         pool._desired.path = Path("/weights/step_100")
         pool._desired.step = 100
 
         loaded = AdapterState(name="lora", path=Path("/weights/step_100"), step=100)
-        assert pool._adapter_matches_desired(loaded) is True
-
         loaded_wrong_path = AdapterState(name="lora", path=Path("/weights/step_50"), step=50)
+
+        assert pool._adapter_matches_desired(loaded) is True
         assert pool._adapter_matches_desired(loaded_wrong_path) is False
 
 
 def test_adapter_matches_by_step_when_nonzero():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
         pool._desired.path = Path("/weights/step_100")
         pool._desired.step = 100
 
-        # Different path but same step
         loaded = AdapterState(name="lora", path=Path("/other/path"), step=100)
+
         assert pool._adapter_matches_desired(loaded) is True
 
 
 def test_adapter_does_not_match_by_zero_step():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
         pool._desired.path = Path("/weights/step_0")
         pool._desired.step = 0
 
-        # Step 0 should not match by step alone (avoid false positives)
         loaded = AdapterState(name="lora", path=Path("/other/path"), step=0)
+
         assert pool._adapter_matches_desired(loaded) is False
 
 
 def test_adapter_returns_false_when_no_adapter_loaded():
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
         pool._desired.path = Path("/weights/step_100")
         pool._desired.step = 100
 
         assert pool._adapter_matches_desired(None) is False
 
 
-# _get_loaded_adapter tests
-
-
 def test_get_loaded_adapter_finds_correct_adapter_when_multiple_loaded():
-    """Test that _get_loaded_adapter returns the adapter matching desired name, not the first one."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
 
-        # Set the desired adapter name
         pool._desired.name = "rft-target-run"
         pool._desired.path = Path("/data/outputs/target_run/broadcasts/step_10")
         pool._desired.step = 10
 
-        # Mock admin client with multiple adapters (like the real scenario)
         mock_admin = AsyncMock()
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        # Simulates vLLM response with multiple adapters from different runs
         mock_response.json.return_value = {
             "data": [
+                {"id": "base-model", "parent": None, "root": "base-model"},
                 {
-                    "id": "base-model",
-                    "parent": None,
-                    "root": "base-model",
-                },
-                {
-                    "id": "rft-other-run",  # Different run's adapter (comes first!)
+                    "id": "rft-other-run",
                     "parent": "base-model",
                     "root": "/data/outputs/other_run/broadcasts/step_48",
                 },
                 {
-                    "id": "rft-target-run",  # Our desired adapter
+                    "id": "rft-target-run",
                     "parent": "base-model",
                     "root": "/data/outputs/target_run/broadcasts/step_10",
                 },
@@ -307,7 +283,6 @@ def test_get_loaded_adapter_finds_correct_adapter_when_multiple_loaded():
 
         result = asyncio.run(pool._get_loaded_adapter("10.0.0.1"))
 
-        # Should return our target adapter, not the first one found
         assert result is not None
         assert result.name == "rft-target-run"
         assert result.path == Path("/data/outputs/target_run/broadcasts/step_10")
@@ -315,14 +290,14 @@ def test_get_loaded_adapter_finds_correct_adapter_when_multiple_loaded():
 
 
 def test_get_loaded_adapter_returns_none_when_desired_adapter_not_found():
-    """Test that _get_loaded_adapter returns None when desired adapter is not in the list."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
 
         pool._desired.name = "rft-missing-run"
         pool._desired.path = Path("/data/outputs/missing_run/broadcasts/step_5")
@@ -346,25 +321,21 @@ def test_get_loaded_adapter_returns_none_when_desired_adapter_not_found():
 
 
 def test_get_loaded_adapter_parses_step_from_path():
-    """Test that _get_loaded_adapter correctly parses step number from path."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
 
         pool._desired.name = "my-lora"
 
         mock_admin = AsyncMock()
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "data": [
-                {"id": "my-lora", "parent": "base", "root": "/weights/step_42"},
-            ]
-        }
+        mock_response.json.return_value = {"data": [{"id": "my-lora", "parent": "base", "root": "/weights/step_42"}]}
         mock_admin.get.return_value = mock_response
         pool._admin_clients["10.0.0.1"] = mock_admin
 
@@ -375,25 +346,21 @@ def test_get_loaded_adapter_parses_step_from_path():
 
 
 def test_get_loaded_adapter_handles_step_dash_format():
-    """Test that _get_loaded_adapter parses step-N format (with dash)."""
-    with patch("prime_rl.utils.elastic.get_logger"):
+    with patch("prime_rl.utils.client.get_logger"):
         mock_config = MagicMock()
+        mock_config.skip_model_check = False
         mock_config.elastic.hostname = "test.hostname"
         mock_config.elastic.port = 8000
         mock_config.elastic.sync_interval = 5.0
         mock_config.router_url = None
-        pool = ElasticInferencePool(client_config=mock_config, model_name="base-model")
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
 
         pool._desired.name = "my-lora"
 
         mock_admin = AsyncMock()
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {
-            "data": [
-                {"id": "my-lora", "parent": "base", "root": "/weights/step-99"},
-            ]
-        }
+        mock_response.json.return_value = {"data": [{"id": "my-lora", "parent": "base", "root": "/weights/step-99"}]}
         mock_admin.get.return_value = mock_response
         pool._admin_clients["10.0.0.1"] = mock_admin
 
@@ -401,3 +368,24 @@ def test_get_loaded_adapter_handles_step_dash_format():
 
         assert result is not None
         assert result.step == 99
+
+
+def test_check_server_health_skips_model_lookup_when_configured():
+    with patch("prime_rl.utils.client.get_logger"):
+        mock_config = MagicMock()
+        mock_config.skip_model_check = True
+        mock_config.elastic.hostname = "test.hostname"
+        mock_config.elastic.port = 8000
+        mock_config.elastic.sync_interval = 5.0
+        mock_config.router_url = None
+        pool = InferencePool(client_config=mock_config, model_name="base-model")
+
+        mock_admin = AsyncMock()
+        health_response = MagicMock()
+        health_response.raise_for_status = MagicMock()
+        mock_admin.get.return_value = health_response
+
+        result = asyncio.run(pool._check_server_health(mock_admin, "10.0.0.1"))
+
+        assert result is True
+        mock_admin.get.assert_called_once_with("/health")

@@ -1,11 +1,13 @@
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from prime_rl.utils.client import _is_retryable_lora_error, load_lora_adapter
+from prime_rl.configs.shared import ClientConfig, ElasticConfig
+from prime_rl.utils.client import InferencePool, _is_retryable_lora_error, load_lora_adapter, setup_inference_pool
+from prime_rl.utils.elastic import ElasticInferencePool
 
 
 def test_is_retryable_lora_error_returns_true_for_404():
@@ -84,3 +86,33 @@ def test_load_lora_adapter_raises_non_retryable_error_immediately():
 
     assert exc_info.value.response.status_code == 400
     assert mock_client.post.call_count == 1
+
+
+def test_setup_inference_pool_returns_unified_static_pool():
+    client_config = ClientConfig(base_url=["http://localhost:8000/v1"], api_key_var="TEST_API_KEY")
+
+    pool = asyncio.run(setup_inference_pool(client_config, model_name="base-model"))
+
+    assert isinstance(pool, InferencePool)
+    assert pool.is_elastic is False
+
+    asyncio.run(pool.stop())
+
+
+def test_setup_inference_pool_returns_unified_elastic_pool():
+    client_config = ClientConfig(
+        base_url=["http://localhost:8000/v1"],
+        api_key_var="TEST_API_KEY",
+        elastic=ElasticConfig(hostname="elastic.test", port=8000, sync_interval=1.0),
+    )
+
+    with patch("prime_rl.utils.client.InferencePool.start", new_callable=AsyncMock) as start_mock:
+        pool = asyncio.run(setup_inference_pool(client_config, model_name="base-model"))
+
+    assert isinstance(pool, InferencePool)
+    assert pool.is_elastic is True
+    start_mock.assert_awaited_once()
+
+
+def test_elastic_inference_pool_is_compatibility_alias():
+    assert ElasticInferencePool is InferencePool
